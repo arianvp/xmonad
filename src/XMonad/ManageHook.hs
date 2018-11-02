@@ -31,7 +31,7 @@ import XMonad.Operations (floatLocation, reveal)
 
 -- | Lift an 'X' action to a 'Query'.
 liftX :: X a -> Query a
-liftX = Query . lift
+liftX x = Query (\_ -> x)
 
 -- | The identity hook that returns the WindowSet unchanged.
 idHook :: Monoid m => m

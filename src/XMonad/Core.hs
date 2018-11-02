@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification, FlexibleInstances, GeneralizedNewtypeDeriving,
+{-# LANGUAGE ExistentialQuantification, FlexibleInstances, DerivingStrategies, DerivingVia,
              MultiParamTypeClasses, TypeSynonymInstances, DeriveDataTypeable #-}
 
 -----------------------------------------------------------------------------
@@ -132,7 +132,9 @@ type WindowSpace = Workspace WorkspaceId (Layout Window) Window
 type WorkspaceId = String
 
 -- | Physical screen indices
-newtype ScreenId    = S Int deriving (Eq,Ord,Show,Read,Enum,Num,Integral,Real)
+newtype ScreenId = S Int
+  deriving stock (Read, Show)
+  deriving (Eq,Ord,Enum,Num,Integral,Real) via Int
 
 -- | The 'Rectangle' with screen dimensions
 data ScreenDetail   = SD { screenRect :: !Rectangle } deriving (Eq,Show, Read)
@@ -146,45 +148,31 @@ data ScreenDetail   = SD { screenRect :: !Rectangle } deriving (Eq,Show, Read)
 -- Dynamic components may be retrieved with 'get', static components
 -- with 'ask'. With newtype deriving we get readers and state monads
 -- instantiated on 'XConf' and 'XState' automatically.
---
-newtype X a = X (ReaderT XConf (StateT XState IO) a)
-    deriving (Functor, Monad, MonadFail, MonadIO, MonadState XState, MonadReader XConf, Typeable)
 
-instance Applicative X where
-  pure = return
-  (<*>) = ap
+-- this should be in base
+instance (Applicative f, Default a) => Default (Ap f a) where
+  def = pure def
 
-instance Semigroup a => Semigroup (X a) where
-    (<>) = liftM2 (<>)
-
-instance (Monoid a) => Monoid (X a) where
-    mempty  = return mempty
-    mappend = liftM2 mappend
-
-instance Default a => Default (X a) where
-    def = return def
+newtype X a = X (XConf -> XState -> IO (a, XState))
+    deriving stock (Typeable)
+    deriving ( Functor, Applicative, Monad, MonadFail
+             , MonadIO, MonadReader XConf, MonadState XState
+             ) via (ReaderT XConf (StateT XState IO))
+    deriving (Monoid, Semigroup, Default) via (Ap X a)
 
 type ManageHook = Query (Endo WindowSet)
-newtype Query a = Query (ReaderT Window X a)
-    deriving (Functor, Applicative, Monad, MonadReader Window, MonadIO)
+
+newtype Query a = Query (Window -> X a)
+  deriving (Functor, Applicative, Monad, MonadReader Window) via ReaderT Window X
+  deriving (Monoid, Semigroup, Default) via (Ap Query a)
 
 runQuery :: Query a -> Window -> X a
-runQuery (Query m) w = runReaderT m w
-
-instance Semigroup a => Semigroup (Query a) where
-    (<>) = liftM2 (<>)
-
-instance Monoid a => Monoid (Query a) where
-    mempty  = return mempty
-    mappend = liftM2 mappend
-
-instance Default a => Default (Query a) where
-    def = return def
+runQuery (Query m) w = m w
 
 -- | Run the 'X' monad, given a chunk of 'X' monad code, and an initial state
 -- Return the result, and final state
 runX :: XConf -> XState -> X a -> IO (a, XState)
-runX c st (X a) = runStateT (runReaderT a c) st
+runX c st (X f) = f c st
 
 -- | Run in the 'X' monad, and in case of exception, and catch it and log it
 -- to stderr, and run the error case.
